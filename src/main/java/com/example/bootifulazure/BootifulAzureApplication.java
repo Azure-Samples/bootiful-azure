@@ -1,23 +1,16 @@
 package com.example.bootifulazure;
 
-import java.net.URISyntaxException;
-import java.security.Principal;
-import java.time.Instant;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.stream.Stream;
-import com.microsoft.azure.servicebus.ExceptionPhase;
-import com.microsoft.azure.servicebus.IMessage;
-import com.microsoft.azure.servicebus.IMessageHandler;
-import com.microsoft.azure.servicebus.ISubscriptionClient;
-import com.microsoft.azure.servicebus.ITopicClient;
-import com.microsoft.azure.servicebus.Message;
+import com.microsoft.azure.servicebus.*;
 import com.microsoft.azure.spring.data.cosmosdb.core.mapping.Document;
 import com.microsoft.azure.spring.data.cosmosdb.repository.DocumentDbRepository;
 import com.microsoft.azure.storage.CloudStorageAccount;
 import com.microsoft.azure.storage.StorageException;
 import com.microsoft.azure.storage.blob.CloudBlobContainer;
 import com.microsoft.azure.storage.blob.CloudBlockBlob;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -25,22 +18,17 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.io.Resource;
 import org.springframework.data.annotation.Id;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
-import org.springframework.security.oauth2.client.userinfo.OAuth2UserService;
-import org.springframework.security.oauth2.core.oidc.user.OidcUser;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.extern.log4j.Log4j2;
+
+import java.net.URISyntaxException;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Stream;
 
 @SpringBootApplication
 public class BootifulAzureApplication {
@@ -50,36 +38,33 @@ public class BootifulAzureApplication {
 	}
 }
 
-@RestController
-class GreetingsRestController {
+@Log4j2
+@Component
+class SqlServerDemo {
 
-	@PreAuthorize("hasRole('Users')")
-	@GetMapping("/greetings")
-	String greet(@AuthenticationPrincipal Principal principal) {
-		return "hello " + principal.getName() + "!";
+	private final JdbcTemplate jdbcTemplate;
+
+	SqlServerDemo(JdbcTemplate jdbcTemplate) {
+		this.jdbcTemplate = jdbcTemplate;
+	}
+
+	@EventListener(ApplicationReadyEvent.class)
+	public void sqlServerDemo() {
+
+		List<Customer> customerList = this.jdbcTemplate
+			.query("select top 10 * from SalesLT.Customer",
+				(rs, rowNum) -> new Customer(rs.getLong("customerid"), rs.getString("firstname"), rs.getString("lastname")));
+
+		customerList.forEach(log::info);
 	}
 }
 
-@EnableGlobalMethodSecurity(prePostEnabled = true)
-@EnableWebSecurity
-class WebSecurity extends WebSecurityConfigurerAdapter {
-
-	private final OAuth2UserService<OidcUserRequest, OidcUser> auth2UserService;
-
-	WebSecurity(OAuth2UserService<OidcUserRequest, OidcUser> auth2UserService) {
-		this.auth2UserService = auth2UserService;
-	}
-
-	@Override
-	protected void configure(HttpSecurity http) throws Exception {
-
-		http
-			.authorizeRequests().anyRequest().authenticated()
-			.and()
-			.oauth2Login()
-			.userInfoEndpoint().oidcUserService(this.auth2UserService);
-
-	}
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+class Customer {
+	private Long id;
+	private String firstName, lastName;
 }
 
 @Log4j2
@@ -87,17 +72,17 @@ class WebSecurity extends WebSecurityConfigurerAdapter {
 class ServiceBusDemo {
 
 	private final ITopicClient topicClient;
-	private final ISubscriptionClient iSubscriptionClient;
+	private final ISubscriptionClient subscriptionClient;
 
-	ServiceBusDemo(ITopicClient topicClient, ISubscriptionClient iSubscriptionClient) {
-		this.topicClient = topicClient;
-		this.iSubscriptionClient = iSubscriptionClient;
+	ServiceBusDemo(ITopicClient tc, ISubscriptionClient sc) {
+		this.topicClient = tc;
+		this.subscriptionClient = sc;
 	}
 
 	@EventListener(ApplicationReadyEvent.class)
-	public void serviceBus() throws Exception {
+	public void serviceBusDemo() throws Exception {
 
-		this.iSubscriptionClient.registerMessageHandler(new IMessageHandler() {
+		this.subscriptionClient.registerMessageHandler(new IMessageHandler() {
 
 			@Override
 			public CompletableFuture<Void> onMessageAsync(IMessage message) {
@@ -141,13 +126,14 @@ class ObjectStorageServiceDemo {
 	}
 
 	@EventListener(ApplicationReadyEvent.class)
-	public void objectStorageService() throws Exception {
+	public void objectStorageServiceDemo() throws Exception {
 
 		CloudBlockBlob cbb = this.files.getBlockBlobReference("cat-" + UUID.randomUUID().toString() + ".jpg");
 		cbb.upload(this.resource.getInputStream(), this.resource.contentLength());
 		log.info("uploaded blockblob to " + cbb.getStorageUri());
 	}
 }
+
 @Component
 @Log4j2
 class CosmosDbDemo {
@@ -159,7 +145,7 @@ class CosmosDbDemo {
 	}
 
 	@EventListener(ApplicationReadyEvent.class)
-	public void cosmosDb() throws Exception {
+	public void cosmosDbDemo() throws Exception {
 
 		this.reservationRepository.deleteAll();
 
@@ -184,3 +170,11 @@ class Reservation {
 interface ReservationRepository extends DocumentDbRepository<Reservation, String> {
 }
 
+@RestController
+class GreetingsRestController {
+
+	@GetMapping("/greetings")
+	String greet() {
+		return "hello, world!";
+	}
+}
